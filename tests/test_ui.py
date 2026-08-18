@@ -90,6 +90,29 @@ def test_database_text_is_html_escaped(tmp_path) -> None:
     app.repository.close()
 
 
+def test_manual_question_entry_validates_and_persists(tmp_path) -> None:
+    app = app_with_question(tmp_path)
+    assert app.add_question({"question_text": "Manual?", "choice_A": "yes", "choice_B": "no", "correct_answer": "yes", "solution": "Because.", "topic": "Manual", "subtopic": "Entry", "difficulty": "3", "kc_id": "new-kc"})
+    saved = [q for q in app.repository.list_questions() if q.question_text == "Manual?"]
+    assert len(saved) == 1 and app.repository.get_skill("new-kc") is not None
+    assert not app.add_question({"question_text": "bad", "choice_A": "one", "correct_answer": "missing", "topic": "T", "subtopic": "S", "difficulty": "9", "kc_id": "k"})
+    app.repository.close()
+
+
+def test_post_answer_rating_flow_creates_exactly_one_attempt(tmp_path) -> None:
+    app = app_with_question(tmp_path); app.start()
+    assert "Understanding rating" not in page(app)
+    assert app.submit_answer("1", 77)
+    pending = page(app)
+    assert "Incorrect" in pending and "DIDNT_KNOW" in pending and "View Solution" not in pending
+    assert len(app.repository.list_attempts_for_session(app.controller.session.session_id)) == 0
+    assert app.finalize_rating("DIDNT_KNOW")
+    assert "View Solution" in page(app)
+    assert len(app.repository.list_attempts_for_session(app.controller.session.session_id)) == 1
+    assert not app.finalize_rating("DIDNT_KNOW")
+    app.repository.close()
+
+
 def test_finish_and_empty_pool_are_safe(tmp_path) -> None:
     app = app_with_question(tmp_path); app.start(); app.finish()
     assert "Session complete" in page(app)

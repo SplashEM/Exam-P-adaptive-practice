@@ -23,7 +23,7 @@ The user can:
 
 ## Understanding ratings and feedback
 
-Collect the understanding rating before correctness/solution feedback whenever practical:
+Collect the understanding rating after correctness feedback and before solution viewing:
 
 - Didn't know / guessed
 - Partially knew
@@ -81,6 +81,7 @@ Automatic importing is not required. MVP validation uses a manually prepared, pr
 
 - Single-user personal application
 - Preloaded/manual question bank
+- One-question-at-a-time manual question entry
 - Multiple-choice practice
 - Question text, answer choices, correct answers, and solutions
 - Topic, subtopic, difficulty, and primary knowledge-component metadata
