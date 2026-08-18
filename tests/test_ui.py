@@ -113,6 +113,19 @@ def test_post_answer_rating_flow_creates_exactly_one_attempt(tmp_path) -> None:
     app.repository.close()
 
 
+def test_finish_then_start_creates_fresh_session_and_question_stats(tmp_path) -> None:
+    app = app_with_question(tmp_path); app.start(); first_id = app.controller.session.session_id
+    app.submit_answer("1", 40); app.finalize_rating("DIDNT_KNOW"); app.finish(); app.home()
+    assert app.controller is None
+    app.start(); second_id = app.controller.session.session_id
+    assert second_id != first_id and app.repository.get_session(first_id).status == "COMPLETED"
+    rendered = page(app)
+    assert "Question Stats" in rendered and "Overall Stats" not in rendered
+    assert app.question_stats("q1")["attempts"] == 1
+    assert app.overall_stats()["attempts"] == 1
+    app.repository.close()
+
+
 def test_finish_and_empty_pool_are_safe(tmp_path) -> None:
     app = app_with_question(tmp_path); app.start(); app.finish()
     assert "Session complete" in page(app)
