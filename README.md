@@ -4,9 +4,9 @@ Exam P Adaptive Practice is a single-user personal actuarial practice applicatio
 
 ## Current status
 
-Milestone 0 — Specification
+Milestone 1 — Core Engine
 
-Application implementation has not started yet.
+The learning engine and its automated tests are now being implemented.
 
 ## Frozen MVP specifications
 
