@@ -204,3 +204,35 @@ def test_adaptive_phase_delegates_selection_to_existing_scheduler(tmp_path, monk
     assert controller.next_question().question_id == "q1"
     assert called == {"used": True}
     repo.close()
+
+
+def test_required_review_is_not_suppressed_for_a_historically_strong_question(tmp_path) -> None:
+    questions = [make_question(f"q{i}", i) for i in range(1, 6)]
+    repo = repo_with_questions(tmp_path, questions)
+    repo.save_skill(KnowledgeComponent("kc1", objective_mastery=0.99, understanding_score=1.0,
+                                       displayed_mastery=0.99, attempts=3,
+                                       distinct_questions_attempted=2))
+    controller = PracticeSessionController(repo, started_at=NOW)
+    strong = controller.next_question()
+    assert strong.question_id == "q1"
+    submit(controller, strong, answer="A", rating=UnderstandingRating.DIDNT_KNOW_GUESSED,
+           error=ErrorType.DIDNT_KNOW)
+    for _ in range(4):
+        submit(controller, controller.next_question())
+    review = controller.next_question()
+    assert review.question_id == strong.question_id
+    assert controller.phase is PracticePhase.REQUIRED_REVIEW
+    repo.close()
+
+
+def test_carryover_is_not_suppressed_for_an_evidence_qualified_mastered_question(tmp_path) -> None:
+    question = make_question("carryover", 3)
+    question.must_review_next_session = True
+    question.must_review_next_session_set_in_session_id = "previous-session"
+    repo = repo_with_questions(tmp_path, [question])
+    repo.save_skill(KnowledgeComponent("kc1", objective_mastery=0.99, understanding_score=1.0,
+                                       displayed_mastery=0.99, attempts=3,
+                                       distinct_questions_attempted=2))
+    controller = PracticeSessionController(repo, started_at=NOW)
+    assert controller.next_question().question_id == "carryover"
+    repo.close()

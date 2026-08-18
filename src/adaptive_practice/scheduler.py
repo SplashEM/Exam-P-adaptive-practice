@@ -7,11 +7,29 @@ from datetime import datetime
 from typing import Iterable, Sequence
 
 from . import config
+from .mastery import mastery_status
 from .models import KnowledgeComponent, Question, SessionState
 
 
-def question_weight(question: Question, kc: KnowledgeComponent, now: datetime) -> float:
-    """Return the V1 adaptive weight.
+def adaptive_mastery_multiplier(kc: KnowledgeComponent) -> float:
+    """Return ordinary adaptive suppression for the existing mastery band.
+
+    ``mastery_status`` is the single source for the evidence-qualified
+    ``Mastered`` condition. Required and carryover reviews never call this
+    helper, so they remain authoritative regardless of the multiplier.
+    """
+    multipliers = {
+        "Weak": config.ADAPTIVE_MULTIPLIER_WEAK,
+        "Developing": config.ADAPTIVE_MULTIPLIER_DEVELOPING,
+        "Competent": config.ADAPTIVE_MULTIPLIER_COMPETENT,
+        "Strong": config.ADAPTIVE_MULTIPLIER_STRONG,
+        "Mastered": config.ADAPTIVE_MULTIPLIER_MASTERED,
+    }
+    return multipliers[mastery_status(kc)]
+
+
+def base_question_weight(question: Question, kc: KnowledgeComponent, now: datetime) -> float:
+    """Return the original V1 adaptive weight before band suppression.
 
     A never-attempted question uses recency 1.0 (maximally stale), a simple
     deterministic treatment that permits it to receive normal consideration.
@@ -31,6 +49,11 @@ def question_weight(question: Question, kc: KnowledgeComponent, now: datetime) -
         + 0.10 * recency
     )
     return config.EXPLORATION_FLOOR + priority
+
+
+def question_weight(question: Question, kc: KnowledgeComponent, now: datetime) -> float:
+    """Return the ordinary adaptive weight after mastery-band suppression."""
+    return base_question_weight(question, kc, now) * adaptive_mastery_multiplier(kc)
 
 
 def is_eligible(
