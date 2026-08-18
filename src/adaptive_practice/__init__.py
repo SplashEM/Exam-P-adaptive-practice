@@ -3,6 +3,7 @@
 from .mastery import mastery_status, process_attempt
 from .models import ErrorType, KnowledgeComponent, Question, SessionState, UnderstandingRating
 from .scheduler import is_eligible, question_weight, select_question
+from .persistence import AttemptRecord, PracticeSession, SQLiteRepository
 
 __all__ = [
     "ErrorType",
@@ -10,6 +11,9 @@ __all__ = [
     "Question",
     "SessionState",
     "UnderstandingRating",
+    "AttemptRecord",
+    "PracticeSession",
+    "SQLiteRepository",
     "is_eligible",
     "mastery_status",
     "process_attempt",

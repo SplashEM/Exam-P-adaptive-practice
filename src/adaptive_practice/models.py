@@ -55,6 +55,12 @@ class Question:
     same_session_review: bool = False
     must_review_next_session: bool = False
     must_review_next_session_set_in_session_id: str | None = None
+    question_text: str = ""
+    answer_choices: list[str] = field(default_factory=list)
+    correct_answer: str | None = None
+    solution: str | None = None
+    topic: str | None = None
+    subtopic: str | None = None
 
 
 @dataclass
