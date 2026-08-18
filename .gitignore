@@ -1,0 +1,9 @@
+# Local application data
+adaptive_practice.sqlite
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# macOS
+.DS_Store

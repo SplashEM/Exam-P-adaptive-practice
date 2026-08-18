@@ -4,9 +4,21 @@ Exam P Adaptive Practice is a single-user personal actuarial practice applicatio
 
 ## Current status
 
-Milestone 3 — Practice Flow
+Milestone 4 — Minimal Usable UI
 
-The project now supports initial question ordering, same-session review, carryover review, adaptive selection, and persistent multi-session practice flow.
+The project now supports initial question ordering, same-session review, carryover review, adaptive selection, and persistent multi-session practice flow through a plain local MVP UI.
+
+## Run locally
+
+No UI dependency installation is required beyond Python 3. To run tests, install the development dependency with `python3 -m pip install -r requirements-dev.txt`.
+
+Start the local app with:
+
+```bash
+PYTHONPATH=src python3 app.py
+```
+
+Then open http://127.0.0.1:8000. The app automatically creates a local SQLite database and seeds a small synthetic demo question bank when it is empty. This is a functional MVP UI, intentionally kept plain.
 
 ## Frozen MVP specifications
 
