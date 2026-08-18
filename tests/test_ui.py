@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import threading
+from urllib.request import urlopen
+
 from adaptive_practice.models import KnowledgeComponent, Question
 from adaptive_practice.persistence import SQLiteRepository
-from adaptive_practice.ui import MinimalPracticeApp, page
+from adaptive_practice.ui import MinimalPracticeApp, create_server, page
 
 
 def app_with_question(tmp_path) -> MinimalPracticeApp:
@@ -16,6 +19,18 @@ def test_app_entry_state_renders_home_screen(tmp_path) -> None:
     app = app_with_question(tmp_path)
     assert "Start Practice" in page(app)
     app.repository.close()
+
+
+def test_http_get_uses_repository_without_thread_affinity_error(tmp_path) -> None:
+    """Serve in the repository's creating thread; client runs separately."""
+    server = create_server(str(tmp_path / "server.sqlite"), port=0)
+    response: list[bytes] = []
+    def request() -> None:
+        response.append(urlopen(f"http://127.0.0.1:{server.server_address[1]}/", timeout=2).read())
+    client = threading.Thread(target=request)
+    client.start(); server.handle_request(); client.join(timeout=2)
+    server.server_close()
+    assert response and b"Start Practice" in response[0]
 
 
 def test_start_renders_question_and_requires_answer_and_rating(tmp_path) -> None:

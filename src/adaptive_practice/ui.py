@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import html
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs
 
 from .models import ErrorType, KnowledgeComponent, Question, UnderstandingRating
@@ -147,7 +147,7 @@ def stats_html(app: MinimalPracticeApp, mastery: float | None = None) -> str:
     return f"<p>Attempts: {data['attempts']}. Correct: {data['correct']}. Incorrect: {data['incorrect']}. Accuracy: {data['accuracy']}%. Average response time: {data['average_time']} ms. Last attempted: {html.escape(str(data['last_attempted']))}.{mastery_text}</p>"
 
 
-def create_server(database_path: str = "adaptive_practice.sqlite", host: str = "127.0.0.1", port: int = 8000) -> ThreadingHTTPServer:
+def create_server(database_path: str = "adaptive_practice.sqlite", host: str = "127.0.0.1", port: int = 8000) -> HTTPServer:
     repository = SQLiteRepository(database_path); repository.initialize()
     app = MinimalPracticeApp(repository)
     class Handler(BaseHTTPRequestHandler):
@@ -170,7 +170,8 @@ def create_server(database_path: str = "adaptive_practice.sqlite", host: str = "
         def _respond(self):
             body = page(app).encode(); self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8"); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
         def log_message(self, *_): pass
-    return ThreadingHTTPServer((host, port), Handler)
+    # The repository is intentionally single-threaded for this local MVP.
+    return HTTPServer((host, port), Handler)
 
 
 def run() -> None:
