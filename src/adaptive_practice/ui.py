@@ -61,7 +61,13 @@ class MinimalPracticeApp:
 
     def start(self, topic: str | None = None, subtopic: str | None = None) -> None:
         self.controller = PracticeSessionController(self.repository, topic=topic or None, subtopic=subtopic or None)
-        self.feedback = None; self.error = None
+        self.feedback = None; self.pending_answer = None; self.error = None
+
+    def home(self) -> None:
+        """Discard only completed UI/session-local state; keep persisted study history."""
+        if self.controller and self.controller.phase is PracticePhase.COMPLETED:
+            self.controller = None
+        self.feedback = None; self.pending_answer = None; self.error = None
 
     def add_question(self, values: dict[str, str]) -> bool:
         text = values.get("question_text", "").strip(); kc_id = values.get("kc_id", "").strip()
@@ -168,6 +174,22 @@ class MinimalPracticeApp:
                 "average_time": round(sum(times) / len(times)) if times else 0,
                 "last_attempted": attempts[-1].submitted_at.isoformat() if attempts and attempts[-1].submitted_at else "Not attempted"}
 
+    def question_stats(self, question_id: str) -> dict[str, float | int | str | list]:
+        return self._stats(self.repository.list_attempts_for_question(question_id))
+
+    def overall_stats(self) -> dict[str, float | int | str | list]:
+        rows = self.repository.connection.execute("SELECT * FROM attempts ORDER BY created_at, rowid").fetchall()
+        return self._stats([self.repository._attempt_from_row(row) for row in rows])
+
+    @staticmethod
+    def _stats(attempts):
+        submitted = [item for item in attempts if not item.skipped]
+        correct = sum(item.correct is True for item in submitted); times = [item.response_time_ms for item in submitted if item.response_time_ms is not None]
+        return {"attempts": len(submitted), "correct": correct, "incorrect": len(submitted)-correct,
+                "accuracy": round(100*correct/len(submitted), 1) if submitted else 0,
+                "average_time": round(sum(times)/len(times)) if times else 0,
+                "times": times, "last_attempted": submitted[-1].submitted_at.isoformat() if submitted and submitted[-1].submitted_at else "Not attempted"}
+
 
 def page(app: MinimalPracticeApp) -> str:
     def esc(value) -> str: return html.escape(str(value))
@@ -176,7 +198,7 @@ def page(app: MinimalPracticeApp) -> str:
         topics = sorted({q.topic for q in app.repository.list_questions() if q.topic})
         options = "".join(f"<option value='{esc(topic)}'>{esc(topic)}</option>" for topic in topics)
         message = f"<p>{esc(app.error)}</p>" if app.error else ""
-        return f"<html><body>{header}<h2>Start practice</h2>{message}<form method='post' action='/start'>Topic: <select name='topic'><option value=''>All topics</option>{options}</select> Subtopic: <input name='subtopic'> <button>Start Practice</button></form><p><a href='/add-question'>Add Question</a></p></body></html>"
+        return f"<html><body>{header}<h2>Start practice</h2>{overall_stats_html(app)}{message}<form method='post' action='/start'>Topic: <select name='topic'><option value=''>All topics</option>{options}</select> Subtopic: <input name='subtopic'> <button>Start Practice</button></form><p><a href='/add-question'>Add Question</a></p></body></html>"
     if app.controller.phase is PracticePhase.COMPLETED:
         return f"<html><body>{header}<h2>Session complete</h2>{stats_html(app)}<p><a href='/'>Start another session</a></p></body></html>"
     if app.feedback:
@@ -198,7 +220,7 @@ def page(app: MinimalPracticeApp) -> str:
     choices = "".join(f"<label><input type='radio' name='answer' value='{esc(choice)}'>{esc(choice)}</label><br>" for choice in question.answer_choices)
     message = f"<p style='color:red'>{esc(app.error)}</p>" if app.error else ""
     skill = app.repository.get_skill(question.primary_kc_id)
-    return f"<html><body>{header}<h2>{esc(question.question_text)}</h2><p>{esc(question.topic)} / {esc(question.subtopic)} · Difficulty {question.difficulty}</p>{stats_html(app, skill.displayed_mastery if skill else None)}{message}<form method='post' action='/answer'>{choices}<input type='hidden' name='shown_at' value='{time.monotonic()}'><button>Submit Answer</button></form><form method='post' action='/finish'><button>Finish Session</button></form></body></html>"
+    return f"<html><body>{header}<h2>{esc(question.question_text)}</h2><p>{esc(question.topic)} / {esc(question.subtopic)} · Difficulty {question.difficulty}</p>{question_stats_html(app, question.question_id, skill.displayed_mastery if skill else None)}{message}<form method='post' action='/answer'>{choices}<input type='hidden' name='shown_at' value='{time.monotonic()}'><button>Submit Answer</button></form><form method='post' action='/finish'><button>Finish Session</button></form></body></html>"
 
 
 def add_question_page(app: MinimalPracticeApp) -> str:
@@ -216,12 +238,24 @@ def stats_html(app: MinimalPracticeApp, mastery: float | None = None) -> str:
     mastery_text = f" Mastery: {mastery:.0%}." if mastery is not None else ""
     return f"<p>Attempts: {data['attempts']}. Correct: {data['correct']}. Incorrect: {data['incorrect']}. Accuracy: {data['accuracy']}%. Average response time: {data['average_time']} ms. Last attempted: {html.escape(str(data['last_attempted']))}.{mastery_text}</p>"
 
+def question_stats_html(app, question_id, mastery):
+    if not app.stats_visible: return ""
+    data = app.question_stats(question_id)
+    return f"<h3>Question Stats</h3><p>Attempts: {data['attempts']}. Correct: {data['correct']}. Incorrect: {data['incorrect']}. Accuracy: {data['accuracy']}%. Times: {data['times']}. Average response time: {data['average_time']} ms. Skill mastery: {mastery:.0%}. Last attempted: {html.escape(str(data['last_attempted']))}.</p>"
+
+def overall_stats_html(app):
+    if not app.stats_visible: return ""
+    data = app.overall_stats()
+    return f"<h3>Overall Stats</h3><p>Total attempts: {data['attempts']}. Correct: {data['correct']}. Incorrect: {data['incorrect']}. Accuracy: {data['accuracy']}%. Average response time: {data['average_time']} ms.</p>"
+
 
 def create_server(database_path: str = "adaptive_practice.sqlite", host: str = "127.0.0.1", port: int = 8000) -> HTTPServer:
     repository = SQLiteRepository(database_path); repository.initialize()
     app = MinimalPracticeApp(repository)
     class Handler(BaseHTTPRequestHandler):
-        def do_GET(self): self._respond(add_question_page(app) if self.path == "/add-question" else None)
+        def do_GET(self):
+            if self.path == "/": app.home()
+            self._respond(add_question_page(app) if self.path == "/add-question" else None)
         def do_POST(self):
             values = parse_qs(self.rfile.read(int(self.headers.get("Content-Length", 0))).decode())
             route = self.path

@@ -53,6 +53,8 @@ Track the following for study history and display when statistics are visible:
 
 Statistics have a visibility toggle. Turning statistics off changes only visibility; the application must continue collecting all data.
 
+When visible, statistics include separate current-question/card statistics and overall aggregate statistics. Finishing a session must allow the user to immediately start a new session while retaining all study history and review requirements.
+
 ## Initial pass
 
 For the selected question pool:
