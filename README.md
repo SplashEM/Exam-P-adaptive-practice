@@ -4,9 +4,9 @@ Exam P Adaptive Practice is a single-user personal actuarial practice applicatio
 
 ## Current status
 
-Milestone 2 — Persistence
+Milestone 3 — Practice Flow
 
-Mastery, attempts, sessions, and review state now persist locally.
+The project now supports initial question ordering, same-session review, carryover review, adaptive selection, and persistent multi-session practice flow.
 
 ## Frozen MVP specifications
 

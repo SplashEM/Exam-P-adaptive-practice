@@ -4,6 +4,7 @@ from .mastery import mastery_status, process_attempt
 from .models import ErrorType, KnowledgeComponent, Question, SessionState, UnderstandingRating
 from .scheduler import is_eligible, question_weight, select_question
 from .persistence import AttemptRecord, PracticeSession, SQLiteRepository
+from .practice import PracticePhase, PracticeSessionController, SubmissionResult
 
 __all__ = [
     "ErrorType",
@@ -14,6 +15,9 @@ __all__ = [
     "AttemptRecord",
     "PracticeSession",
     "SQLiteRepository",
+    "PracticePhase",
+    "PracticeSessionController",
+    "SubmissionResult",
     "is_eligible",
     "mastery_status",
     "process_attempt",
