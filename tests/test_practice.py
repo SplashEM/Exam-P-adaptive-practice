@@ -147,7 +147,7 @@ def test_carryover_restart_is_early_not_duplicated_and_clears_on_later_success(t
     reopened = SQLiteRepository(path); reopened.initialize()
     second = PracticeSessionController(reopened, started_at=NOW + timedelta(days=1))
     carryover = second.next_question()
-    assert carryover.question_id == "weak" and list(second._initial_queue).count("weak") == 0
+    assert carryover.question_id == "weak" and list(second._coverage_queue).count("weak") == 0
     submit(second, carryover, rating=UnderstandingRating.KNEW_HOW)
     assert reopened.get_question("weak").must_review_next_session is False
     assert len(reopened.list_attempts_for_question("weak")) == 2
@@ -235,4 +235,74 @@ def test_carryover_is_not_suppressed_for_an_evidence_qualified_mastered_question
                                        distinct_questions_attempted=2))
     controller = PracticeSessionController(repo, started_at=NOW)
     assert controller.next_question().question_id == "carryover"
+    repo.close()
+
+
+def test_coverage_shows_every_selected_question_once_before_required_review(tmp_path) -> None:
+    questions = [make_question("q1", 1), make_question("q2", 1), make_question("q3", 2),
+                 make_question("q4", 3), make_question("q5", 4), make_question("q6", 5)]
+    repo = repo_with_questions(tmp_path, questions)
+    controller = PracticeSessionController(repo, rng=random.Random(9), started_at=NOW)
+    shown = []
+    for index in range(6):
+        question = controller.next_question()
+        shown.append(question.question_id)
+        if index == 0:
+            submit(controller, question, answer="A", rating=UnderstandingRating.DIDNT_KNOW_GUESSED,
+                   error=ErrorType.DIDNT_KNOW)
+        else:
+            submit(controller, question)
+    assert set(shown) == {question.question_id for question in questions}
+    assert len(shown) == len(set(shown))
+    review = controller.next_question()
+    assert controller.phase is PracticePhase.REQUIRED_REVIEW
+    assert review.question_id == shown[0]
+    repo.close()
+
+
+def test_fresh_coverage_is_easy_to_hard_with_seeded_equal_difficulty_shuffle(tmp_path) -> None:
+    questions = [make_question("q1", 1), make_question("q2", 1), make_question("q3", 2),
+                 make_question("q4", 3), make_question("q5", 4), make_question("q6", 5)]
+    repo = repo_with_questions(tmp_path, questions)
+    controller = PracticeSessionController(repo, rng=random.Random(7), started_at=NOW)
+    shown = []
+    for _ in questions:
+        question = controller.next_question(); shown.append(question)
+        submit(controller, question)
+    assert [question.difficulty for question in shown] == [1, 1, 2, 3, 4, 5]
+    assert {question.question_id for question in shown[:2]} == {"q1", "q2"}
+    repo.close()
+
+
+def test_later_session_covers_every_selected_question_again(tmp_path) -> None:
+    questions = [make_question("q1", 1), make_question("q2", 2), make_question("q3", 3),
+                 make_question("q4", 4), make_question("q5", 5)]
+    repo = repo_with_questions(tmp_path, questions)
+    first = PracticeSessionController(repo, rng=random.Random(3), started_at=NOW)
+    for _ in questions:
+        submit(first, first.next_question())
+    first.finish()
+    second = PracticeSessionController(repo, rng=random.Random(4), started_at=NOW + timedelta(days=1))
+    shown = []
+    for _ in questions:
+        question = second.next_question(); shown.append(question.question_id)
+        submit(second, question)
+    assert set(shown) == {question.question_id for question in questions}
+    assert len(shown) == len(set(shown))
+    repo.close()
+
+
+def test_mastered_question_receives_coverage_before_adaptive_suppression(tmp_path) -> None:
+    questions = [make_question("mastered", 1), make_question("other", 2)]
+    repo = repo_with_questions(tmp_path, questions)
+    repo.save_skill(KnowledgeComponent("kc1", objective_mastery=.99, understanding_score=1.0,
+                                       displayed_mastery=.99, attempts=3,
+                                       distinct_questions_attempted=2))
+    controller = PracticeSessionController(repo, started_at=NOW)
+    shown = []
+    for _ in questions:
+        question = controller.next_question(); shown.append(question.question_id)
+        submit(controller, question)
+    assert "mastered" in shown
+    assert len(shown) == len(set(shown))
     repo.close()

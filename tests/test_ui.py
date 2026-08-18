@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import threading
-from urllib.request import urlopen
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
+from adaptive_practice import config
 from adaptive_practice.models import KnowledgeComponent, Question
 from adaptive_practice.persistence import SQLiteRepository
 from adaptive_practice.ui import MinimalPracticeApp, create_server, page
@@ -99,6 +101,37 @@ def test_manual_question_entry_validates_and_persists(tmp_path) -> None:
     app.repository.close()
 
 
+def test_manual_question_radio_choice_persists_and_enters_its_topic_pool_after_restart(tmp_path) -> None:
+    path = tmp_path / "ui.sqlite"
+    app = app_with_question(tmp_path)
+    values = {
+        "question_text": "Added probability question", "choice_A": "one", "choice_B": "two",
+        "correct_choice": "B", "solution": "two is correct", "topic": "Probability Test",
+        "subtopic": "Manual Entry", "difficulty": "3", "kc_id": "manual-probability",
+    }
+    assert app.add_question(values)
+    assert "Question saved" in page(app)
+    app.start(topic="Probability Test", subtopic="Manual Entry")
+    assert app.current_question().question_text == "Added probability question"
+    app.repository.close()
+
+    reopened = SQLiteRepository(path); reopened.initialize()
+    restored = MinimalPracticeApp(reopened)
+    assert "Probability Test" in page(restored)
+    assert restored.start(topic="Probability Test") is True
+    assert restored.current_question().question_text == "Added probability question"
+    reopened.close()
+
+
+def test_invalid_manual_question_and_no_matching_filter_show_useful_errors(tmp_path) -> None:
+    app = app_with_question(tmp_path)
+    assert not app.add_question({"question_text": "", "choice_A": "one", "choice_B": "two"})
+    assert app.error == "Question text is required."
+    assert app.start(topic="Not a topic") is False
+    assert "No active questions match" in page(app)
+    app.repository.close()
+
+
 def test_post_answer_rating_flow_creates_exactly_one_attempt(tmp_path) -> None:
     app = app_with_question(tmp_path); app.start()
     assert "Understanding rating" not in page(app)
@@ -131,7 +164,84 @@ def test_finish_and_empty_pool_are_safe(tmp_path) -> None:
     assert "Session complete" in page(app)
     empty_repo = SQLiteRepository(tmp_path / "empty.sqlite"); empty_repo.initialize()
     empty = MinimalPracticeApp(empty_repo)
-    # Demo seed supplies a usable bank; a no-match filter reaches completion without a crash.
-    empty.start(topic="no-match")
-    assert "Session complete" in page(empty)
+    # A no-match filter stays on the start page with a useful message.
+    assert empty.start(topic="no-match") is False
+    assert "No active questions match" in page(empty)
     app.repository.close(); empty_repo.close()
+
+
+def test_reset_demo_stats_button_is_limited_to_the_named_beta_database(tmp_path) -> None:
+    beta_repo = SQLiteRepository(tmp_path / "scheduler_beta.sqlite"); beta_repo.initialize()
+    beta = MinimalPracticeApp(beta_repo)
+    assert "Reset Demo Stats" in page(beta)
+    normal_repo = SQLiteRepository(tmp_path / "adaptive_practice.sqlite"); normal_repo.initialize()
+    normal = MinimalPracticeApp(normal_repo)
+    assert "Reset Demo Stats" not in page(normal)
+    beta_repo.close(); normal_repo.close()
+
+
+def test_reset_demo_stats_endpoint_rejects_non_demo_database(tmp_path) -> None:
+    server = create_server(str(tmp_path / "adaptive_practice.sqlite"), port=0)
+    result: list[int] = []
+
+    def request() -> None:
+        try:
+            urlopen(Request(f"http://127.0.0.1:{server.server_address[1]}/reset-demo-stats", data=b""), timeout=2)
+        except HTTPError as error:
+            result.append(error.code)
+
+    client = threading.Thread(target=request)
+    client.start(); server.handle_request(); client.join(timeout=2)
+    server.server_close()
+    assert result == [404]
+
+
+def test_confirmed_demo_reset_preserves_questions_and_restores_fresh_state(tmp_path) -> None:
+    repo = SQLiteRepository(tmp_path / "scheduler_beta.sqlite"); repo.initialize()
+    app = MinimalPracticeApp(repo)
+    original_questions = [
+        (question.question_id, question.question_text, question.answer_choices, question.correct_answer,
+         question.solution, question.topic, question.subtopic, question.difficulty, question.primary_kc_id)
+        for question in repo.list_questions()
+    ]
+    assert len(original_questions) == 6
+    assert app.request_demo_reset()
+    assert "Confirm Reset Demo Stats" in page(app)
+    app.cancel_demo_reset()
+
+    app.start()
+    question = app.current_question()
+    assert question is not None
+    assert app.submit_answer(question.answer_choices[0], 321)
+    assert app.finalize_rating("DIDNT_KNOW")
+    old_session_id = app.controller.session.session_id
+    assert repo.list_attempts_for_session(old_session_id)
+    assert app.request_demo_reset()
+    assert app.reset_confirmation is True
+    assert app.confirm_demo_reset()
+
+    assert repo.connection.execute("SELECT COUNT(*) FROM attempts").fetchone()[0] == 0
+    assert repo.connection.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
+    assert repo.get_session(old_session_id) is None
+    assert [
+        (question.question_id, question.question_text, question.answer_choices, question.correct_answer,
+         question.solution, question.topic, question.subtopic, question.difficulty, question.primary_kc_id)
+        for question in repo.list_questions()
+    ] == original_questions
+    for question in repo.list_questions():
+        assert question.review_need == 0.50
+        assert question.last_attempt_at is None and question.last_attempt_correct is None
+        assert question.same_session_review is False and question.must_review_next_session is False
+    for kc_id in ("probability_basics", "distributions"):
+        skill = repo.get_skill(kc_id)
+        assert skill.objective_mastery == config.P0
+        assert skill.understanding_score == 0.50
+        assert skill.displayed_mastery == config.P0
+        assert (skill.attempts, skill.successes, skill.failures, skill.distinct_questions_attempted,
+                skill.meta_rating_count, skill.last_attempt_at) == (0, 0, 0, 0, 0, None)
+
+    app.start()
+    fresh = app.current_question()
+    assert fresh is not None and app.controller.session.session_id != old_session_id
+    assert repo.get_session(app.controller.session.session_id).status == "ACTIVE"
+    repo.close()

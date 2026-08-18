@@ -14,7 +14,7 @@ from .scheduler import is_eligible, select_question
 
 
 class PracticePhase(Enum):
-    INITIAL_PASS = "INITIAL_PASS"
+    COVERAGE = "COVERAGE"
     REQUIRED_REVIEW = "REQUIRED_REVIEW"
     ADAPTIVE_REVIEW = "ADAPTIVE_REVIEW"
     COMPLETED = "COMPLETED"
@@ -46,7 +46,7 @@ class PracticeSessionController:
         self.rng = rng or random.Random()
         self.session: PracticeSession = repository.start_session(started_at)
         self.session_state = SessionState(self.session.session_id)
-        self.phase = PracticePhase.INITIAL_PASS
+        self.phase = PracticePhase.COVERAGE
         self._shown_question_id: str | None = None
         self._shown_at: datetime | None = None
         self._required_reviews: dict[str, int] = {}
@@ -62,8 +62,18 @@ class PracticeSessionController:
             question for question in self.pool
             if question.question_id not in carryover_ids and question.last_attempt_at is None
         ]
-        # Carryovers are early; within each group, equal difficulty is shuffled.
-        self._initial_queue = self._difficulty_order(carryover) + self._difficulty_order(new_questions)
+        seen_questions = [
+            question for question in self.pool
+            if question.question_id not in carryover_ids and question.last_attempt_at is not None
+        ]
+        # Every selected item is covered once before ordinary adaptive review.
+        # Carryovers remain early; first-ever items retain easiest-to-hardest
+        # ordering; previously seen non-carryovers are deliberately shuffled.
+        self._coverage_queue = (
+            self._difficulty_order(carryover)
+            + self._difficulty_order(new_questions)
+            + self._shuffled_order(seen_questions)
+        )
 
     def next_question(self) -> Question | None:
         """Return the current displayed question or choose the next eligible one."""
@@ -72,9 +82,9 @@ class PracticeSessionController:
         if self._shown_question_id is not None:
             return self.repository.get_question(self._shown_question_id)
 
-        if self.phase is PracticePhase.INITIAL_PASS:
-            if self._initial_queue:
-                return self._show(self._initial_queue.pop(0))
+        if self.phase is PracticePhase.COVERAGE:
+            if self._coverage_queue:
+                return self._show(self._coverage_queue.pop(0))
             self.phase = PracticePhase.REQUIRED_REVIEW
 
         if self.phase is PracticePhase.REQUIRED_REVIEW:
@@ -170,6 +180,11 @@ class PracticeSessionController:
             self.rng.shuffle(group)
             result.extend(group)
         return result
+
+    def _shuffled_order(self, questions: list[Question]) -> list[str]:
+        question_ids = [question.question_id for question in questions]
+        self.rng.shuffle(question_ids)
+        return question_ids
 
     def _show(self, question_id: str) -> Question:
         self._shown_question_id = question_id

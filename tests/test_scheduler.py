@@ -76,6 +76,18 @@ def test_recency_is_capped_at_one() -> None:
     assert question_weight(question, kc, NOW) == pytest.approx(old_weight)
 
 
+def test_difficulty_has_no_effect_on_adaptive_weight() -> None:
+    easy = make_question("easy")
+    hard = make_question("hard")
+    hard.difficulty = 5
+    for question in (easy, hard):
+        question.review_need = 0.35
+        question.last_attempt_at = NOW - timedelta(days=7)
+        question.last_attempt_correct = True
+    kc = KnowledgeComponent("kc1", displayed_mastery=0.70)
+    assert question_weight(easy, kc, NOW) == pytest.approx(question_weight(hard, kc, NOW))
+
+
 @pytest.mark.parametrize(
     ("displayed_mastery", "attempts", "distinct_questions", "expected"),
     [
