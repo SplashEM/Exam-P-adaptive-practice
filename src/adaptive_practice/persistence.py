@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import config
 from .mastery import process_attempt
 from .models import ErrorType, KnowledgeComponent, Question, SessionState, UnderstandingRating
 
@@ -72,7 +73,8 @@ class SQLiteRepository:
     """Explicit SQLite reads and transactional writes for the MVP."""
 
     def __init__(self, database_path: str | Path) -> None:
-        self.connection = sqlite3.connect(str(database_path))
+        self.database_path = Path(database_path)
+        self.connection = sqlite3.connect(str(self.database_path))
         self.connection.row_factory = sqlite3.Row
         self.connection.execute("PRAGMA foreign_keys = ON")
 
@@ -175,6 +177,36 @@ class SQLiteRepository:
         session = self.get_session(session_id)
         assert session is not None
         return session
+
+    def reset_study_progress(self) -> None:
+        """Atomically restore durable study state without changing question content.
+
+        The UI exposes this only for the dedicated beta database.  The method
+        intentionally preserves questions, their metadata, and their IDs.
+        """
+        with self.connection:
+            self.connection.execute("DELETE FROM attempts")
+            self.connection.execute("DELETE FROM sessions")
+            self.connection.execute("DELETE FROM kc_question_attempts")
+            self.connection.execute(
+                """
+                UPDATE questions SET
+                    review_need = ?, last_attempt_at = NULL,
+                    last_attempt_correct = NULL, must_review_next_session = 0,
+                    must_review_next_session_set_in_session_id = NULL
+                """,
+                (0.50,),
+            )
+            self.connection.execute(
+                """
+                UPDATE skills SET
+                    objective_mastery = ?, understanding_score = ?, displayed_mastery = ?,
+                    attempts = 0, successes = 0, failures = 0,
+                    distinct_questions_attempted = 0, meta_rating_count = 0,
+                    last_attempt_at = NULL
+                """,
+                (config.P0, 0.50, config.P0),
+            )
 
     def list_attempts_for_question(self, question_id: str) -> list[AttemptRecord]:
         return self._list_attempts("question_id", question_id)

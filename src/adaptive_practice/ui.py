@@ -33,12 +33,12 @@ def seed_demo_questions(repository: SQLiteRepository) -> None:
     for kc_id in ("probability_basics", "distributions"):
         repository.save_skill(KnowledgeComponent(kc_id))
     samples = [
-        ("demo-1", "A fair coin is tossed once. What is P(heads)?", ["0", "1/2", "1", "2"], "1/2", "A fair coin has two equally likely outcomes.", "Probability", "Basics", 1, "probability_basics"),
-        ("demo-2", "A fair die is rolled. What is P(an even result)?", ["1/6", "1/3", "1/2", "2/3"], "1/2", "The even outcomes are 2, 4, and 6: three of six.", "Probability", "Basics", 2, "probability_basics"),
-        ("demo-3", "If P(A)=0.4 and P(B)=0.5 for independent events, what is P(A and B)?", ["0.1", "0.2", "0.4", "0.9"], "0.2", "For independent events, multiply: 0.4 × 0.5.", "Probability", "Independence", 3, "probability_basics"),
-        ("demo-4", "A Bernoulli random variable with p=0.3 has expected value:", ["0", "0.3", "0.7", "1"], "0.3", "The mean of Bernoulli(p) is p.", "Distributions", "Bernoulli", 1, "distributions"),
-        ("demo-5", "For X ~ Binomial(n=2, p=0.5), P(X=2) equals:", ["0.25", "0.5", "0.75", "1"], "0.25", "Both trials must succeed: 0.5².", "Distributions", "Binomial", 2, "distributions"),
-        ("demo-6", "For a continuous random variable, P(X equals exactly 3) is:", ["0", "0.25", "0.5", "1"], "0", "A continuous distribution assigns probability zero to a single point.", "Distributions", "Continuous", 3, "distributions"),
+        ("demo-1", "TEST Q1 — 2 + 2 = ?", ["A. 3", "B. 4", "C. 5", "D. 6"], "B. 4", "2 + 2 = 4.", "Beta Test", "Arithmetic", 1, "probability_basics"),
+        ("demo-2", "TEST Q2 — 3 + 3 = ?", ["A. 5", "B. 6", "C. 7", "D. 8"], "B. 6", "3 + 3 = 6.", "Beta Test", "Arithmetic", 2, "probability_basics"),
+        ("demo-3", "TEST Q3 — 4 + 4 = ?", ["A. 6", "B. 7", "C. 8", "D. 9"], "C. 8", "4 + 4 = 8.", "Beta Test", "Arithmetic", 3, "probability_basics"),
+        ("demo-4", "TEST Q4 — 5 + 5 = ?", ["A. 8", "B. 9", "C. 10", "D. 11"], "C. 10", "5 + 5 = 10.", "Beta Test", "Arithmetic", 1, "distributions"),
+        ("demo-5", "TEST Q5 — 6 + 6 = ?", ["A. 10", "B. 11", "C. 12", "D. 13"], "C. 12", "6 + 6 = 12.", "Beta Test", "Arithmetic", 2, "distributions"),
+        ("demo-6", "TEST Q6 — 7 + 7 = ?", ["A. 12", "B. 13", "C. 14", "D. 15"], "C. 14", "7 + 7 = 14.", "Beta Test", "Arithmetic", 3, "distributions"),
     ]
     for item in samples:
         question_id, text, choices, answer, solution, topic, subtopic, difficulty, kc_id = item
@@ -53,15 +53,26 @@ class MinimalPracticeApp:
     def __init__(self, repository: SQLiteRepository) -> None:
         self.repository = repository
         seed_demo_questions(repository)
+        self.demo_reset_enabled = repository.database_path.name == "scheduler_beta.sqlite"
         self.controller: PracticeSessionController | None = None
         self.stats_visible = True
         self.feedback: dict | None = None
         self.pending_answer: dict | None = None
+        self.reset_confirmation = False
         self.error: str | None = None
+        self.notice: str | None = None
 
-    def start(self, topic: str | None = None, subtopic: str | None = None) -> None:
-        self.controller = PracticeSessionController(self.repository, topic=topic or None, subtopic=subtopic or None)
+    def start(self, topic: str | None = None, subtopic: str | None = None) -> bool:
+        topic = topic.strip() or None if topic else None
+        subtopic = subtopic.strip() or None if subtopic else None
+        if not self._matching_questions(topic, subtopic):
+            self.controller = None
+            self.error = "No active questions match the selected topic and subtopic. Choose different filters."
+            return False
+        self.controller = PracticeSessionController(self.repository, topic=topic, subtopic=subtopic)
         self.feedback = None; self.pending_answer = None; self.error = None
+        self.notice = None
+        return True
 
     def home(self) -> None:
         """Discard only completed UI/session-local state; keep persisted study history."""
@@ -69,22 +80,70 @@ class MinimalPracticeApp:
             self.controller = None
         self.feedback = None; self.pending_answer = None; self.error = None
 
+    def _matching_questions(self, topic: str | None, subtopic: str | None) -> list[Question]:
+        return [
+            question for question in self.repository.list_questions()
+            if question.active
+            and (topic is None or question.topic == topic)
+            and (subtopic is None or question.subtopic == subtopic)
+        ]
+
+    def request_demo_reset(self) -> bool:
+        if not self.demo_reset_enabled:
+            return False
+        self.reset_confirmation = True
+        self.error = None
+        return True
+
+    def confirm_demo_reset(self) -> bool:
+        if not self.demo_reset_enabled or not self.reset_confirmation:
+            return False
+        self.repository.reset_study_progress()
+        self.controller = None
+        self.feedback = None
+        self.pending_answer = None
+        self.reset_confirmation = False
+        self.error = "Demo statistics reset."
+        return True
+
+    def cancel_demo_reset(self) -> None:
+        self.reset_confirmation = False
+        self.error = None
+
     def add_question(self, values: dict[str, str]) -> bool:
         text = values.get("question_text", "").strip(); kc_id = values.get("kc_id", "").strip()
         choices = [values.get(f"choice_{letter}", "").strip() for letter in "ABCDE"]
         choices = [choice for choice in choices if choice]
-        correct = values.get("correct_answer", "").strip()
+        selected_choice = values.get("correct_choice", "").strip()
+        correct = values.get(f"choice_{selected_choice}", "").strip() if selected_choice else values.get("correct_answer", "").strip()
+        solution = values.get("solution", "").strip()
+        topic = values.get("topic", "").strip(); subtopic = values.get("subtopic", "").strip()
         try: difficulty = int(values.get("difficulty", ""))
         except ValueError: difficulty = 0
-        if not text or not kc_id or not values.get("topic", "").strip() or not values.get("subtopic", "").strip() or len(choices) < 2 or correct not in choices or difficulty not in range(1, 6):
-            self.error = "Enter question text, topic, subtopic, KC, difficulty 1–5, two choices, and a matching correct answer."
+        if not text:
+            self.error = "Question text is required."
+        elif len(choices) < 2:
+            self.error = "Enter at least two answer choices."
+        elif selected_choice and selected_choice not in "ABCDE":
+            self.error = "Choose the correct answer from the entered choices."
+        elif not correct or correct not in choices:
+            self.error = "Choose the correct answer from one of the entered choices."
+        elif not solution:
+            self.error = "A solution or explanation is required."
+        elif not topic or not subtopic or not kc_id:
+            self.error = "Topic, subtopic, and primary knowledge component are required."
+        elif difficulty not in range(1, 6):
+            self.error = "Difficulty must be a whole number from 1 to 5."
+        else:
+            self.error = None
+        if self.error:
             return False
         if self.repository.get_skill(kc_id) is None:
             self.repository.save_skill(KnowledgeComponent(kc_id))
         self.repository.save_question(Question(f"manual-{uuid.uuid4()}", kc_id, len(choices), difficulty,
             question_text=text, answer_choices=choices, correct_answer=correct,
-            solution=values.get("solution", "").strip(), topic=values["topic"].strip(), subtopic=values["subtopic"].strip()))
-        self.error = "Question saved."
+            solution=solution, topic=topic, subtopic=subtopic))
+        self.notice = "Question saved. It is available in practice and under its topic."
         return True
 
     def submit_answer(self, selected_answer: str | None, response_time_ms: int) -> bool:
@@ -196,9 +255,13 @@ def page(app: MinimalPracticeApp) -> str:
     header = "<h1>Exam P Adaptive Practice</h1><form method='post' action='/toggle'><button>Toggle statistics</button></form>"
     if app.controller is None:
         topics = sorted({q.topic for q in app.repository.list_questions() if q.topic})
-        options = "".join(f"<option value='{esc(topic)}'>{esc(topic)}</option>" for topic in topics)
-        message = f"<p>{esc(app.error)}</p>" if app.error else ""
-        return f"<html><body>{header}<h2>Start practice</h2>{overall_stats_html(app)}{message}<form method='post' action='/start'>Topic: <select name='topic'><option value=''>All topics</option>{options}</select> Subtopic: <input name='subtopic'> <button>Start Practice</button></form><p><a href='/add-question'>Add Question</a></p></body></html>"
+        subtopics = sorted({q.subtopic for q in app.repository.list_questions() if q.subtopic})
+        topic_options = "".join(f"<option value='{esc(topic)}'>{esc(topic)}</option>" for topic in topics)
+        subtopic_options = "".join(f"<option value='{esc(subtopic)}'>{esc(subtopic)}</option>" for subtopic in subtopics)
+        message = f"<p style='color:red'>{esc(app.error)}</p>" if app.error else ""
+        notice = f"<p>{esc(app.notice)}</p>" if app.notice else ""
+        reset = demo_reset_html(app)
+        return f"<html><body>{header}<h2>Start practice</h2>{overall_stats_html(app)}{notice}{message}<form method='post' action='/start'>Topic: <select name='topic'><option value=''>All Questions</option>{topic_options}</select> Subtopic: <select name='subtopic'><option value=''>All Subtopics</option>{subtopic_options}</select> <button>Start Practice</button></form><p><a href='/add-question'>Add Question</a></p>{reset}</body></html>"
     if app.controller.phase is PracticePhase.COMPLETED:
         return f"<html><body>{header}<h2>Session complete</h2>{stats_html(app)}<p><a href='/'>Start another session</a></p></body></html>"
     if app.feedback:
@@ -226,9 +289,11 @@ def page(app: MinimalPracticeApp) -> str:
 def add_question_page(app: MinimalPracticeApp) -> str:
     def esc(value): return html.escape(str(value))
     message = f"<p>{esc(app.error)}</p>" if app.error else ""
-    choices = "".join(f"<p>{letter}: <input name='choice_{letter}'></p>" for letter in "ABCDE")
-    correct = "".join(f"<option value='{{{letter}}}'>Use entered {letter}</option>" for letter in "ABCDE")
-    return f"<html><body><h1>Add Question</h1>{message}<form method='post' action='/save-question'><p>Question text: <textarea name='question_text'></textarea></p>{choices}<p>Correct answer (enter exact choice text): <input name='correct_answer'></p><p>Solution: <textarea name='solution'></textarea></p><p>Topic: <input name='topic'> Subtopic: <input name='subtopic'></p><p>Difficulty (1–5): <input name='difficulty'></p><p>Primary knowledge component: <input name='kc_id'></p><button>Save Question</button></form><p><a href='/'>Home</a></p></body></html>"
+    choices = "".join(
+        f"<p>{letter}: <input name='choice_{letter}'> <label><input type='radio' name='correct_choice' value='{letter}'> Correct answer</label></p>"
+        for letter in "ABCDE"
+    )
+    return f"<html><body><h1>Add Question</h1>{message}<form method='post' action='/save-question'><p>Question text: <textarea name='question_text'></textarea></p>{choices}<p>Solution: <textarea name='solution'></textarea></p><p>Topic: <input name='topic'> Subtopic: <input name='subtopic'></p><p>Difficulty (1–5): <input name='difficulty'></p><p>Primary knowledge component: <input name='kc_id'></p><button>Save Question</button></form><p><a href='/'>Home</a></p></body></html>"
 
 
 def stats_html(app: MinimalPracticeApp, mastery: float | None = None) -> str:
@@ -249,16 +314,31 @@ def overall_stats_html(app):
     return f"<h3>Overall Stats</h3><p>Total attempts: {data['attempts']}. Correct: {data['correct']}. Incorrect: {data['incorrect']}. Accuracy: {data['accuracy']}%. Average response time: {data['average_time']} ms.</p>"
 
 
+def demo_reset_html(app: MinimalPracticeApp) -> str:
+    if not app.demo_reset_enabled:
+        return ""
+    if app.reset_confirmation:
+        return ("<h3>Reset Demo Stats</h3><p>This clears all study progress in scheduler_beta.sqlite. "
+                "Question content is kept.</p><form method='post' action='/confirm-reset-demo-stats'>"
+                "<button>Confirm Reset Demo Stats</button></form>"
+                "<form method='post' action='/cancel-reset-demo-stats'><button>Cancel</button></form>")
+    return "<form method='post' action='/reset-demo-stats'><button>Reset Demo Stats</button></form>"
+
+
 def create_server(database_path: str = "adaptive_practice.sqlite", host: str = "127.0.0.1", port: int = 8000) -> HTTPServer:
     repository = SQLiteRepository(database_path); repository.initialize()
     app = MinimalPracticeApp(repository)
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
+            if self.path in {"/reset-demo-stats", "/confirm-reset-demo-stats", "/cancel-reset-demo-stats"}:
+                self._respond("Not Found", status=404); return
             if self.path == "/": app.home()
             self._respond(add_question_page(app) if self.path == "/add-question" else None)
         def do_POST(self):
             values = parse_qs(self.rfile.read(int(self.headers.get("Content-Length", 0))).decode())
             route = self.path
+            if route in {"/reset-demo-stats", "/confirm-reset-demo-stats", "/cancel-reset-demo-stats"} and not app.demo_reset_enabled:
+                self._respond("Not Found", status=404); return
             if route == "/start": app.start(values.get("topic", [""])[0], values.get("subtopic", [""])[0])
             elif route == "/toggle": app.stats_visible = not app.stats_visible
             elif route == "/next": app.next()
@@ -271,12 +351,18 @@ def create_server(database_path: str = "adaptive_practice.sqlite", host: str = "
                 elapsed_ms = max(0, int((time.monotonic() - shown) * 1000))
                 app.submit_answer(values.get("answer", [None])[0], elapsed_ms)
             elif route == "/rating": app.finalize_rating(values.get("rating", [None])[0])
+            elif route == "/reset-demo-stats": app.request_demo_reset()
+            elif route == "/confirm-reset-demo-stats": app.confirm_demo_reset()
+            elif route == "/cancel-reset-demo-stats": app.cancel_demo_reset()
             elif route == "/save-question":
-                app.add_question({key: value[0] for key, value in values.items()})
+                if app.add_question({key: value[0] for key, value in values.items()}):
+                    self._redirect("/"); return
                 self._respond(add_question_page(app)); return
             self._respond()
-        def _respond(self, rendered=None):
-            body = (rendered or page(app)).encode(); self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8"); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+        def _respond(self, rendered=None, status=200):
+            body = (rendered or page(app)).encode(); self.send_response(status); self.send_header("Content-Type", "text/html; charset=utf-8"); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+        def _redirect(self, location):
+            self.send_response(303); self.send_header("Location", location); self.end_headers()
         def log_message(self, *_): pass
     # The repository is intentionally single-threaded for this local MVP.
     return HTTPServer((host, port), Handler)
