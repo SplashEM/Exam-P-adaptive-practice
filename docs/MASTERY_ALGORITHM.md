@@ -1,6 +1,6 @@
 # Exam P Adaptive Practice — Mastery Algorithm (V1)
 
-This document is the authoritative V1 learning-engine specification. It documents future implementation requirements only; it does not introduce an implementation, schema, or configuration code.
+This document is the authoritative V1 learning-engine specification. It documents future implementation requirements only; it does not introduce an implementation, schema, or configuration code. V1 intentionally collects the self-assessment after correctness feedback and before solution viewing; this changes collection timing only, not the learning calculations.
 
 ## Core concepts
 

@@ -4,9 +4,9 @@ Exam P Adaptive Practice is a single-user personal actuarial practice applicatio
 
 ## Current status
 
-Milestone 4 — Minimal Usable UI
+Milestone 5 — Beta Fixes
 
-The project now supports initial question ordering, same-session review, carryover review, adaptive selection, and persistent multi-session practice flow through a plain local MVP UI.
+The project supports persistent multi-session practice through a plain local MVP UI, including one-at-a-time manual question entry and post-answer understanding ratings.
 
 ## Run locally
 
