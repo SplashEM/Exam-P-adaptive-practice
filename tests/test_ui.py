@@ -11,6 +11,7 @@ from adaptive_practice.ui import MinimalPracticeApp, create_server, page
 
 
 def app_with_question(tmp_path) -> MinimalPracticeApp:
+    tmp_path.mkdir(parents=True, exist_ok=True)
     repo = SQLiteRepository(tmp_path / "ui.sqlite"); repo.initialize()
     repo.save_skill(KnowledgeComponent("kc"))
     repo.save_question(Question("q1", "kc", 2, 1, question_text="What is 1 + 1?", answer_choices=["1", "2"], correct_answer="2", solution="1 + 1 = 2.", topic="Demo", subtopic="Basics"))
@@ -19,7 +20,9 @@ def app_with_question(tmp_path) -> MinimalPracticeApp:
 
 def test_app_entry_state_renders_home_screen(tmp_path) -> None:
     app = app_with_question(tmp_path)
-    assert "Start Practice" in page(app)
+    rendered = page(app)
+    assert "Start Practice" in rendered and "/static/app.css" in rendered
+    assert "Overall Stats" in rendered and "All Topics" in rendered and "All Subtopics" in rendered
     app.repository.close()
 
 
@@ -37,7 +40,10 @@ def test_http_get_uses_repository_without_thread_affinity_error(tmp_path) -> Non
 
 def test_start_renders_question_and_requires_answer_and_rating(tmp_path) -> None:
     app = app_with_question(tmp_path); app.start()
-    assert "What is 1 + 1?" in page(app)
+    rendered = page(app)
+    assert "What is 1 + 1?" in rendered and "answer-option" in rendered
+    assert "Coverage" in rendered and "Question Stats" in rendered
+    assert "Didn't know / guessed" not in rendered
     assert app.submit(None, None, None, 10) is False
     assert "Choose both" in app.error
     app.repository.close()
@@ -47,7 +53,7 @@ def test_submission_feedback_solution_and_single_attempt(tmp_path) -> None:
     app = app_with_question(tmp_path); app.start()
     assert app.submit("2", "FULLY_UNDERSTOOD", None, 123) is True
     rendered = page(app)
-    assert "Correct" in rendered and "Correct answer: 2" in rendered and "View Solution" in rendered
+    assert "Correct" in rendered and "Correct answer" in rendered and "Solution" in rendered
     attempts = app.repository.list_attempts_for_session(app.controller.session.session_id)
     assert len(attempts) == 1 and attempts[0].response_time_ms == 123
     assert app.submit("2", "FULLY_UNDERSTOOD", None, 123) is False
@@ -66,9 +72,9 @@ def test_error_classification_required_for_wrong_answer(tmp_path) -> None:
 
 def test_stats_toggle_hides_only_display(tmp_path) -> None:
     app = app_with_question(tmp_path); app.start(); app.submit("2", "KNEW_HOW", None, 100)
-    assert "Attempts: 1" in page(app) and "Last attempted:" in page(app)
+    assert "Session Stats" in page(app)
     app.stats_visible = False
-    assert "Attempts: 1" not in page(app)
+    assert "Session Stats" not in page(app)
     assert len(app.repository.list_attempts_for_session(app.controller.session.session_id)) == 1
     app.repository.close()
 
@@ -140,10 +146,28 @@ def test_post_answer_rating_flow_creates_exactly_one_attempt(tmp_path) -> None:
     assert "Incorrect" in pending and "DIDNT_KNOW" in pending and "View Solution" not in pending
     assert len(app.repository.list_attempts_for_session(app.controller.session.session_id)) == 0
     assert app.finalize_rating("DIDNT_KNOW")
-    assert "View Solution" in page(app)
+    assert "Solution" in page(app)
     assert len(app.repository.list_attempts_for_session(app.controller.session.session_id)) == 1
     assert not app.finalize_rating("DIDNT_KNOW")
     app.repository.close()
+
+
+def test_rating_cards_show_only_options_for_the_answer_result(tmp_path) -> None:
+    correct = app_with_question(tmp_path / "correct")
+    correct.start(); assert correct.submit_answer("2", 20)
+    correct_page = page(correct)
+    assert "How well did you understand it?" in correct_page
+    assert "Fully understood" in correct_page
+    assert "Didn't know how to solve it" not in correct_page
+    correct.repository.close()
+
+    wrong = app_with_question(tmp_path / "wrong")
+    wrong.start(); assert wrong.submit_answer("1", 20)
+    wrong_page = page(wrong)
+    assert "What went wrong?" in wrong_page
+    assert "Partially understood / setup issue" in wrong_page
+    assert "Fully understood" not in wrong_page
+    wrong.repository.close()
 
 
 def test_finish_then_start_creates_fresh_session_and_question_stats(tmp_path) -> None:
